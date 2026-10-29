@@ -1,0 +1,17 @@
+# input data
+data/
+
+# in-progress data
+drafts/
+
+# environment variables
+.env
+
+# virtual environment
+backend/.venv/
+
+# Python cache
+__pycache__/
+.DS_Store
+
+.vscode/ 
