@@ -3,14 +3,14 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 # This must run BEFORE anything imports `app`: backend/src is not on sys.path
 # by default, and alembic.ini's `prepend_sys_path = .` only adds backend/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from app.config import get_settings  # noqa: E402
-from app.models import DB_SCHEMAS, Base  # noqa: E402
+from app.config import get_settings
+from app.models import DB_SCHEMAS, Base
 
 config = context.config
 
@@ -39,7 +39,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
-        include_name=include_name,
+        include_name=include_name,  # type: ignore[arg-type]
         compare_type=True,
     )
     with context.begin_transaction():
@@ -57,7 +57,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             include_schemas=True,
-            include_name=include_name,
+            include_name=include_name,  # type: ignore[arg-type]
             compare_type=True,
         )
         with context.begin_transaction():

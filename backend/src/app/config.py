@@ -8,19 +8,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class DatabaseSettings(BaseModel):
     drivername: str = "postgresql+psycopg"
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_user: str = "transit_user"
-    db_password: str = "postgres"
-    db_name: str = "transit"
+    host: str = "localhost"
+    port: int = 5432
+    user: str = "transit_user"
+    password: str = "postgres"
+    name: str = "transit"
     poolclass: Literal["_default_", "static_pool", "queue_pool"] = "_default_"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
         return (
-            f"{self.drivername}://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+            f"{self.drivername}://{self.user}:{self.password}"
+            f"@{self.host}:{self.port}/{self.name}"
         )
 
 
