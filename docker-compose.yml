@@ -8,15 +8,15 @@ services:
     platform: linux/amd64
     container_name: transit-db
     environment:
-      POSTGRES_USER: ${TRANSIT_DB_USER:-transit_user}
-      POSTGRES_PASSWORD: ${TRANSIT_DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${TRANSIT_DB_NAME:-transit}
+      POSTGRES_USER: ${DB__USER:-transit_user}
+      POSTGRES_PASSWORD: ${DB__PASSWORD:-postgres}
+      POSTGRES_DB: ${DB__NAME:-transit}
     ports:
-      - "${TRANSIT_DB_PORT:-5432}:5432"
+      - "${DB__PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${TRANSIT_DB_USER:-transit_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB__USER:-transit_user} -p ${DB__PORT:-5432} -d ${DB__NAME:-transit}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,7 +33,7 @@ services:
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${TRANSIT_DB_USER:-transit_user}:${TRANSIT_DB_PASSWORD:-postgres}@db:5432/${TRANSIT_DB_NAME:-transit}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${DB__USER:-transit_user}:${DB__PASSWORD:-postgres}@db:5432/${DB__NAME:-transit}
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: admin
       _AIRFLOW_WWW_USER_PASSWORD: admin
