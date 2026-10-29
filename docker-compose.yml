@@ -1,0 +1,83 @@
+name: transit-coverage
+
+services:
+  db:
+    image: postgis/postgis:16-3.6
+    # The official postgis/postgis image has no arm64 build. Docker Desktop on
+    # Apple Silicon runs it under Rosetta; drop this line on an amd64 host.
+    platform: linux/amd64
+    container_name: transit-db
+    environment:
+      POSTGRES_USER: ${TRANSIT_DB_USER:-transit_user}
+      POSTGRES_PASSWORD: ${TRANSIT_DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${TRANSIT_DB_NAME:-transit}
+    ports:
+      - "${TRANSIT_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TRANSIT_DB_USER:-transit_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - core
+      - pipeline
+
+  airflow-api-server:
+    image: apache/airflow:latest-python3.14
+    container_name: transit-airflow-webserver
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${TRANSIT_DB_USER:-transit_user}:${TRANSIT_DB_PASSWORD:-postgres}@db:5432/${TRANSIT_DB_NAME:-transit}
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      _AIRFLOW_WWW_USER_FIRSTNAME: Admin
+      _AIRFLOW_WWW_USER_LASTNAME: User
+      _AIRFLOW_WWW_USER_EMAIL: admin@example.com
+      _AIRFLOW_WWW_USER_ROLE: Admin
+    volumes:
+      - ./pipeline/dags:/opt/airflow/dags
+      - ./src/transitcov:/opt/airflow/src/transitcov
+      - airflow_logs:/opt/airflow/logs
+      - gtfs_downloads:/tmp/gtfs
+    ports:
+      - "${AIRFLOW_WEB_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: airflow webserver
+    profiles:
+      - pipeline
+
+  airflow-scheduler:
+    image: apache/airflow:latest-python3.14
+    container_name: transit-airflow-scheduler
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${TRANSIT_DB_USER:-transit_user}:${TRANSIT_DB_PASSWORD:-postgres}@db:5432/${TRANSIT_DB_NAME:-transit}
+    volumes:
+      - ./pipeline/dags:/opt/airflow/dags
+      - ./src/transitcov:/opt/airflow/src/transitcov
+      - airflow_logs:/opt/airflow/logs
+      - gtfs_downloads:/tmp/gtfs
+    depends_on:
+      db:
+        condition: service_healthy
+    command: airflow scheduler
+    profiles:
+      - pipeline
+
+volumes:
+  postgres_data:
+  airflow_logs:
+  gtfs_downloads:
