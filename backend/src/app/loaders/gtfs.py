@@ -102,6 +102,10 @@ def transform(feed_version_id: str, stops_df: pd.DataFrame) -> list[dict[str, An
     for row, geom_m, geom_w in zip(
         stops_df.itertuples(index=False), metric_geoms, wgs84_geoms
     ):
+        # Skip invalid/null geometries
+        if geom_m is None or geom_w is None or geom_m.is_empty or geom_w.is_empty:
+            continue
+
         location_type = int(row.location_type) if pd.notna(row.location_type) else 0
         records.append(
             {
@@ -133,18 +137,26 @@ def transform(feed_version_id: str, stops_df: pd.DataFrame) -> list[dict[str, An
 
 
 def load(records: list[dict[str, Any]], session: Session) -> int:
-    """Upsert by (feed_version_id, stop_id). Idempotent: re-running is safe."""
+    """Upsert by (feed_version_id, stop_id) in batches (stay under 65,535 params)."""
     if not records:
         return 0
-    stmt = pg_insert(Stop).values(records)
-    update_cols = {
-        c: stmt.excluded[c]
-        for c in records[0]
-        if c not in ("feed_version_id", "stop_id")
-    }
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[Stop.feed_version_id, Stop.stop_id],
-        set_=update_cols,
-    )
-    session.execute(stmt)
-    return len(records)
+
+    batch_size = 5000
+    total = 0
+
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        stmt = pg_insert(Stop).values(batch)
+        update_cols = {
+            c: stmt.excluded[c]
+            for c in batch[0]
+            if c not in ("feed_version_id", "stop_id")
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[Stop.feed_version_id, Stop.stop_id],
+            set_=update_cols,
+        )
+        session.execute(stmt)
+        total += len(batch)
+
+    return total

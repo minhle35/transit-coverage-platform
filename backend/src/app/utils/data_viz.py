@@ -76,8 +76,8 @@ class DataPaths:
             gtfs_root=data_dir / "_published_public_transport_gtfs_schedule_gtfs",
             census_root=data_dir / "2021_GCP_all_for_VIC_short_header",
             sa1_shapefile=data_dir
-            / "SA1_2026_AUST_SHP_GDA2020"
-            / "SA1_2026_AUST_GDA2020.shp",
+            / "SA1_2021_AUST_SHP_GDA2020"
+            / "SA1_2021_AUST_GDA2020.shp",
         )
 
 

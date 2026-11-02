@@ -19,7 +19,7 @@ import pandas as pd
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.geo import CensusSa1
+from app.models.census import CensusSa1
 
 CODE_COL = "SA1_CODE_2021"
 POPULATION_COL = "Tot_P_P"
@@ -49,10 +49,21 @@ def transform(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def load(records: list[dict[str, Any]], session: Session) -> int:
+    """Upsert by sa1_code in batches (stay under PostgreSQL 65,535 param limit)."""
     if not records:
         return 0
-    stmt = pg_insert(CensusSa1).values(records)
-    update_cols = {c: stmt.excluded[c] for c in records[0] if c != "sa1_code"}
-    stmt = stmt.on_conflict_do_update(index_elements=[CensusSa1.sa1_code], set_=update_cols)
-    session.execute(stmt)
-    return len(records)
+
+    batch_size = 10000
+    total = 0
+
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        stmt = pg_insert(CensusSa1).values(batch)
+        update_cols = {c: stmt.excluded[c] for c in batch[0] if c != "sa1_code"}
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[CensusSa1.sa1_code], set_=update_cols
+        )
+        session.execute(stmt)
+        total += len(batch)
+
+    return total
