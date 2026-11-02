@@ -45,12 +45,17 @@ class Stop(Base):
 
     feed_version_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     stop_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    stop_code: Mapped[float | None] = mapped_column(Float)
     stop_name: Mapped[str | None] = mapped_column(String(256))
     stop_lat: Mapped[float | None] = mapped_column(Float)
     stop_lon: Mapped[float | None] = mapped_column(Float)
     location_type: Mapped[int] = mapped_column(SmallInteger, default=0)
     parent_station: Mapped[str | None] = mapped_column(String(64))
+    wheelchair_boarding: Mapped[float | None] = mapped_column(Float, default=0)
+    zone: Mapped[str | None] = mapped_column(String)
     platform_code: Mapped[str | None] = mapped_column(String(32))
+    level_id: Mapped[str | None] = mapped_column(String)
+
     is_station: Mapped[bool] = mapped_column(Boolean, default=False)
     is_platform: Mapped[bool] = mapped_column(Boolean, default=False)
 
