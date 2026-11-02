@@ -12,6 +12,7 @@ from app.models.base import DB_SCHEMAS, Base
 from app.models.census import CensusSa1
 from app.models.geo import AreaSa1
 from app.models.gtfs import Stop, StopServiceHourly
+from app.models.metrics import Sa1Accessibility, Sa1StopDistance
 from app.models.ops import ActiveVersion, FeedVersion
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "AreaSa1",
     "CensusSa1",
     "FeedVersion",
+    "Sa1Accessibility",
+    "Sa1StopDistance",
     "Stop",
     "StopServiceHourly",
 ]
