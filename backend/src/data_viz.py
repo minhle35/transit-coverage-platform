@@ -22,10 +22,10 @@ from matplotlib import pyplot as plt
 # ============================================================================
 
 ZONE_MODES = {
-    "1": {"name": "Regional Train", "color": "#E74C3C"},
+    "1": {"name": "Regional Train", "color": "#F39C12"},
     "2": {"name": "Metropolitan Train", "color": "#3498DB"},
     "3": {"name": "Metropolitan Tram", "color": "#2ECC71"},
-    "4": {"name": "Myki Bus", "color": "#F39C12"},
+    "4": {"name": "Myki Bus", "color": "#E74C3C"},
     "5": {"name": "Regional Coach", "color": "#9B59B6"},
     "6": {"name": "Regional Bus", "color": "#E91E63"},
     "10": {"name": "Interstate", "color": "#8B4513"},

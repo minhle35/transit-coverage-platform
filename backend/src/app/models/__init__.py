@@ -9,11 +9,29 @@ what exists.
 """
 
 from app.models.base import DB_SCHEMAS, Base
+from app.models.geo import AreaSa1, CensusSa1, Sa1Correspondence
+from app.models.gtfs import (
+    Route,
+    ServiceCalendar,
+    ServiceException,
+    Stop,
+    StopServiceHourly,
+    Trip,
+)
 from app.models.ops import ActiveVersion, FeedVersion
 
 __all__ = [
+    "Base",
     "DB_SCHEMAS",
     "ActiveVersion",
-    "Base",
+    "AreaSa1",
+    "CensusSa1",
     "FeedVersion",
+    "Route",
+    "Sa1Correspondence",
+    "ServiceCalendar",
+    "ServiceException",
+    "Stop",
+    "StopServiceHourly",
+    "Trip",
 ]
