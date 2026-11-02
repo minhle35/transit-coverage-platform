@@ -374,6 +374,18 @@ The local snapshot is dated 23 October 2026 and lives under `data/` (gitignored)
 | 2021 Census G01 | 15,482 SA1 rows for Victoria; total population 6,503,324 |
 | SA2 Census tables | 119 G-series CSVs present, but the SA2 **boundary** file is not yet downloaded |
 
+#### Data Snapshot: Melbourne CBD Transit Coverage
+
+![Melbourne CBD with SA1 boundaries and transit stops by mode](backend/scripts/Combined_Victoria_Melbourne_Stops_full.png)
+
+**What you're seeing:**
+- Light grey: All Victoria SA1 boundaries (15,478 polygons)
+- Blue shaded region: Melbourne CBD area (11 SA2s)
+- Colored points: Transit stops by mode (red=Regional Train, blue=Metro Train, green=Tram, orange=Bus, etc.)
+- Density of stops reveals infrastructure concentration in urban core
+
+See `backend/scripts/data_viz.py` to generate this visualization from loaded data.
+
 ### 5.4 Data quality issues to resolve
 
 1. **Boundary vintage mismatch.** The repository has **2026 SA1 boundaries** (ASGS Edition 4) but **2021 Census** counts (Edition 3). Joining by code matches only 12,365 of 15,482 census SA1s (79.9%), covering 5,110,390 of 6,503,324 people (78.6%). The remaining 3,117 SA1s and 1.39 million people would be silently dropped. Two valid fixes:
