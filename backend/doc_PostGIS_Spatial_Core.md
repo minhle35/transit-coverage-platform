@@ -38,3 +38,28 @@ Files to Create:
 - Test files
 - API layer: read views and endpoints
 - Integration & Orchestration: wire the metrics job into the data pipeline
+
+## Key decisions:
+### 1. Raw PostGIS SQL Functions vs GeoPandas and Shapely vs ORM-only (SQLAlchemy + GeoAlchemy2)
+After running ```scripts/data_viz.py``` + data exploration: we understand there are 15,482 VIC SA1 origins (from shapefiles) and 32,063 transit stops (from gtfs schedules).
+Hence if we use ```GeoPandas``` Python
+- 15,000 iterations 
+- each iteration: compute distance to 32k points
+- 15k * 32k = 480m distance calculations
+- Shapely distance: can do 0.5-1 microseconds per call (GEOS library)
+- 480M * 1 microsecond = 480 seconds = 8 minutes (math, I/O overhead)
+- Memory: ~500MB for geometries + temporaru lists
+- Total: 8-10 minutes, single-threaded
+
+If we use ```PostGIS``` with GiST Index, we can build index on ```stop.geom``` (balanced tree indexing for geometric and spatial data)
+- for each SA1 point, query uses index to find 30-50 stops within 400m (not 32K)
+- we only need to compute distance to those 50 stops
+- 480M calculations become 50K index-filtered calculations
+- 50K * 1 microseconds = 50 milliseconds
+- 9600x faster than using ```GeoPandas``` with Python code
+
+Reasons:
+- We can't index in GeoPandas at query time
+- GeoPandas can create a spatial index (RTree) but it will only for data already exist in memory
+- Queries like "stops within 400m" needs to prune candidates before computing distance
+- PostGIS GiST indexes live on disk; they're consulted automatically by the query planner
