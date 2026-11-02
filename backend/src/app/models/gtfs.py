@@ -29,12 +29,24 @@ from app.models.base import Base
 
 
 class Stop(Base):
-    """A stop, platform, station, entrance or node.
+    """A GTFS stop, in one mode, for one feed version.
 
-    Victorian metro feeds publish all four. `location_type` follows GTFS:
-    0/blank = platform, 1 = station, 2 = entrance, 3 = generic node.
-    Only platforms and stations carry service, so `is_platform` and
-    `is_station` are materialised here instead of being recomputed in SQL.
+    **Grain:** one row per `(feed_version_id, stop_id, mode)`. Not one row per
+    stop — `stop_id` is not unique across the feed, because Transport Victoria
+    publishes one GTFS archive per operational branch and a stop served by two
+    branches appears in both. README 4.2's unit of analysis is the stop-mode
+    pair, so that is the key. A stop serving two modes (tram and bus, say) is
+    two rows; a stop republished by two branches of the *same* mode is one,
+    merged by the loader. See README 5.2 and 5.4 item 3.
+
+    `location_type` follows GTFS: 0 = platform, 1 = station, 2 = entrance,
+    3 = generic node. Only platforms and stations carry service (README 5.4
+    item 4), so service queries filter `location_type IN (0, 1)` — entrances and
+    nodes are kept for wayfinding and parent-station resolution, never scored.
+
+    Coordinates are held only as geometry, never as loose latitude and
+    longitude: `geom` in EPSG:7899 for every distance calculation, `geom_4326`
+    in WGS84 for GeoJSON at the API edge (README 3.2).
     """
 
     __tablename__ = "stop"
@@ -45,19 +57,32 @@ class Stop(Base):
 
     feed_version_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     stop_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    stop_code: Mapped[float | None] = mapped_column(Float)
-    stop_name: Mapped[str | None] = mapped_column(String(256))
-    stop_lat: Mapped[float | None] = mapped_column(Float)
-    stop_lon: Mapped[float | None] = mapped_column(Float)
-    location_type: Mapped[int] = mapped_column(SmallInteger, default=0)
-    parent_station: Mapped[str | None] = mapped_column(String(64))
-    wheelchair_boarding: Mapped[float | None] = mapped_column(Float, default=0)
-    zone: Mapped[str | None] = mapped_column(String)
-    platform_code: Mapped[str | None] = mapped_column(String(32))
-    level_id: Mapped[str | None] = mapped_column(String)
+    # Scoring mode, grouped by right-of-way. README 4.6 parameterises R_m and
+    # w_m for exactly these three; the eight operational branches the feed is
+    # published under are not modes and are not stored. See README 5.2.
+    #
+    # In the key because the grain is the stop-mode pair: 60 stop_ids in the
+    # snapshot serve two modes (40 tram+bus, 20 rail+bus) and collapsing them
+    # would drop one mode's service from the score.
+    mode: Mapped[str] = mapped_column(
+        String(8),
+        CheckConstraint("mode IN ('rail', 'tram', 'bus')", name="mode_valid"),
+        primary_key=True,
+    )
 
-    is_station: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_platform: Mapped[bool] = mapped_column(Boolean, default=False)
+    stop_name: Mapped[str | None] = mapped_column(String(256))
+    location_type: Mapped[int] = mapped_column(SmallInteger, default=0)
+    # The station a platform belongs to. Required by README 4.3: platforms under
+    # one parent are merged per mode, so a twelve-platform interchange counts
+    # once rather than twelve times. Without it every score near a large station
+    # is inflated by its platform count.
+    parent_station: Mapped[str | None] = mapped_column(String(64))
+    # GTFS enum, not a measurement: 0 = no information, 1 = some accessible
+    # boarding, 2 = not possible. Null in the feed means 0.
+    wheelchair_boarding: Mapped[int] = mapped_column(SmallInteger, default=0)
+    # Needed to exclude `R-Bus` replacement services from scheduled frequency
+    # (README 5.4 item 5).
+    platform_code: Mapped[str | None] = mapped_column(String(32))
 
     # Metres, for every distance calculation. Never measure in 4326.
     geom: Mapped[object | None] = mapped_column(

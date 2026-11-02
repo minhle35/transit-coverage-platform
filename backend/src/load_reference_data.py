@@ -11,7 +11,7 @@ touch the other's already-committed rows.
 
 from pathlib import Path
 
-from app.loaders import census, db, geo
+from app.loaders import census, db, geo, gtfs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = ROOT / "data"
@@ -26,6 +26,8 @@ G01_CSV = (
     / "2021Census_G01_VIC_SA1.csv"
 )
 
+GTFS_ROOT = DATA_DIR / "_published_public_transport_gtfs_schedule_gtfs"
+
 
 def main() -> None:
     print(f"Reading {SHAPEFILE.name} ...")
@@ -39,6 +41,16 @@ def main() -> None:
     with db.get_session() as session:
         n_pop = census.load(population, session)
     print(f"core.census_sa1: upserted {n_pop} rows")
+
+    print(f"Reading GTFS from {GTFS_ROOT}")
+    feed_version_id, stops_df = gtfs.extract(GTFS_ROOT, sa1_shapefile=SHAPEFILE)
+    stops = gtfs.transform(feed_version_id, stops_df)
+
+    with db.get_session() as session:
+        n_stops = gtfs.load(stops, session)
+
+    print(f"core.stop: upserted {n_stops} rows")
+    print(f"Feed version: {feed_version_id}")
 
 
 if __name__ == "__main__":
