@@ -17,6 +17,8 @@ import geopandas as gpd
 import pandas as pd
 from matplotlib import pyplot as plt
 
+from app.study_area import MELBOURNE_CBD_SA2_NAMES
+
 # ============================================================================
 # CONFIGURATION (Extract all magic numbers)
 # ============================================================================
@@ -345,20 +347,7 @@ def main():
     ).to_crs(sa1_gdf.crs)
 
     # Filter to Melbourne CBD region
-    CBD_SA2_NAMES = [
-        "Melbourne CBD - East",
-        "Melbourne CBD - North",
-        "Melbourne CBD - West",
-        "East Melbourne",
-        "Melbourne Airport",
-        "North Melbourne",
-        "Port Melbourne",
-        "Port Melbourne Industrial",
-        "South Melbourne",
-        "West Melbourne - Industrial",
-        "West Melbourne - Residential",
-    ]
-    melbourne_sa2 = sa1_gdf[sa1_gdf["SA2_NAME21"].isin(CBD_SA2_NAMES)]
+    melbourne_sa2 = sa1_gdf[sa1_gdf["SA2_NAME21"].isin(MELBOURNE_CBD_SA2_NAMES)]
 
     print("=" * 80)
     print("BUILDING VISUALIZATION")
