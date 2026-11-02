@@ -140,7 +140,7 @@ class SA1Loader(DataLoader):
     def load(self) -> gpd.GeoDataFrame:
         """Load shapefile and filter to Victoria."""
         gdf = gpd.read_file(self.shapefile_path)
-        vic_only = gdf[gdf["SA1_CODE26"].astype(str).str.startswith("2")].copy()
+        vic_only = gdf[gdf["SA1_CODE21"].astype(str).str.startswith("2")].copy()
         print(f"Loaded {len(vic_only)} Victoria SA1 boundaries\n")
         return vic_only
 
@@ -358,7 +358,7 @@ def main():
         "West Melbourne - Industrial",
         "West Melbourne - Residential",
     ]
-    melbourne_sa2 = sa1_gdf[sa1_gdf["SA2_NAME26"].isin(CBD_SA2_NAMES)]
+    melbourne_sa2 = sa1_gdf[sa1_gdf["SA2_NAME21"].isin(CBD_SA2_NAMES)]
 
     print("=" * 80)
     print("BUILDING VISUALIZATION")
@@ -369,10 +369,10 @@ def main():
         .add_background_layer(sa1_gdf)
         .add_highlight_layer(melbourne_sa2)
         .add_stops_layer(stops_gdf)
-        # .add_labels(melbourne_sa2, "SA2_NAME26") # uncomment to see the areas
+        # .add_labels(melbourne_sa2, "SA2_NAME21") # uncomment to see the areas
         .add_title()
         .zoom_to_bounds(melbourne_sa2)
-        .save(root / config.output_filename)
+        .save(root / "backend" / "scripts" / config.output_filename)
         .close()
     )
 
