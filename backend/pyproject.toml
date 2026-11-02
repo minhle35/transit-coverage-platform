@@ -1,8 +1,7 @@
 [project]
 name = "app"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+description = "Backend for transit coverage scoring library and REST API for Greater Melbourne"
 authors = [
     { email = "118033201+minhle35@users.noreply.github.com" }
 ]
@@ -12,14 +11,17 @@ dependencies = [
     "apache-airflow>=3.3.2",
     "apache-airflow-providers-postgres>=7.1.1",
     "fastapi>=0.136.3",
+    "geoalchemy2>=0.20.0",
     "geopandas>=1.2.0",
     "httpx>=0.24.0",
+    "matplotlib>=3.11.2",
     "numpy>=1.24",
     "pandas>=3.0.6",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.0",
     "pyproj>=3.8.0",
+    "pytest>=9.1.1",
     "python-dotenv>=1.2.4",
     "shapely>=2.2.0",
     "sqlalchemy>=2.1.5",
