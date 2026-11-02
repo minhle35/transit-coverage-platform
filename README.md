@@ -4,7 +4,7 @@
 
 The platform is built on open data (GTFS, ABS boundaries, 2021 Census) and open software (PostGIS, GeoPandas, Airflow, FastAPI, React/MapLibre). It is designed to refresh weekly, to keep the last good version live when a data load fails, and to state the feed and model version behind every number it returns.
 
-> **Status (27 October 2026).** The data snapshot is downloaded and profiled; the PostGIS/Airflow Compose scaffold is present. Ingestion DAGs, the `transitcov` scoring library, the API and the web map are still being built. Numbers in this README were measured against the local `data/` snapshot unless stated otherwise.
+> **Status (2 November 2026).** Reference geography and population are loaded: 15,478 SA1 polygons (ASGS Edition 3) and 15,482 Census G01 rows, joining at 99.97%. GTFS stops load for the Melbourne CBD study area with dual-CRS geometries and a three-mode vocabulary. Still to build: scheduled frequency (`core.stop_service_hourly` is modelled but empty, so the score in section 4 cannot yet be evaluated), the PostGIS metric functions, the `transitcov` library, ingestion DAGs, the API and the web map. Known defects and gaps are tracked in [ISSUES.md](ISSUES.md); the phased build-out is in `drafts/plans.md`. The Alembic history is linear across eight revisions and `alembic check` is clean, but four migrations are not yet committed (ISSUES.md I-19), so the schema is not yet reproducible from a clone. Numbers in this README were measured against the local `data/` snapshot unless stated otherwise.
 
 **Contents**
 
@@ -193,9 +193,9 @@ The scoring function must:
 | `s` | A stop–mode pair inside the catchment of `i` |
 | `d_is` | Walking distance in metres from `i` to `s` (straight-line in v1) |
 | `f_s` | Scheduled departures per hour at `s` in the analysis window |
-| `m(s)` | Mode of `s`: rail, tram, bus or coach |
+| `m(s)` | Mode of `s`: rail, tram or bus, by right-of-way (see 5.2) |
 | `R_m` | Catchment radius for mode `m` |
-| `w_m` | Mode weight |
+| `w_m` | Mode weight, carrying mode reliability (see 4.6) |
 | `f_cap` | Frequency cap (departures per hour) |
 | `β_m` | Distance-decay rate for mode `m` |
 | `k` | Calibration constant that sets how quickly the score saturates |
@@ -230,7 +230,7 @@ These are explicit assumptions to calibrate and publish, not empirical facts.
 | --- | --- | --- | --- |
 | `R_rail` | 800 m | Common planning rule of thumb for rail access | Assumption |
 | `R_tram`, `R_bus` | 400 m | Common planning rule of thumb for street-level access | Assumption |
-| `w_m` | 1.0 for every mode | Neutral until a sensitivity run justifies otherwise | Assumption |
+| `w_m` | rail 1.0, tram 0.8, bus 0.8 | PTAL penalises traffic-exposed modes through a reliability term in average waiting time (rail 0.75 min, bus 2.0 min); `w_m` carries that here rather than being neutral | Assumption, from Wu & Hine (2003) |
 | `f_cap` | 12 departures/hour | Beyond a five-minute headway, waiting time barely changes | Assumption |
 | `k` | 5.0 | Sets a readable scale; frozen after the first full run | To calibrate once |
 | Window | 07:00–09:00 weekday | Peak commuting service | Assumption |
@@ -359,7 +359,83 @@ The map exposes the same result twice: as a coloured hex layer for reading the c
 | SA2 boundary | `SA2_CODE26`, `SA2_NAME26`, geometry |
 | Census G01 | `SA1_CODE_2021`, `Tot_P_P` (and `Tot_P_M`, `Tot_P_F` if needed) |
 
-**Mode mapping.** The Victorian feed uses extended GTFS route types, not only the base 0–7 values. In the current snapshot: `0` = tram, `2` = regional train, `400` = metro train (in the metro folder), `3` and `701` = bus, `204` = coach. The mode folder is a cross-check, not the sole source; the mapping must be explicit and tested.
+**Mode mapping.** This is the single most error-prone part of reading the Victorian feed, so it is set out in full.
+
+*The folder structure is not the mode.* Transport Victoria publishes one ZIP per **operational
+branch**, and its documentation describes the folders as exactly that. A branch is an
+administrative unit, not a transport technology: folder 4 ("Myki Bus") mixes metropolitan and
+regional town services, and folder 11 ("SkyBus") is one operator. The folder is therefore
+corroboration, never the source of truth.
+
+*`route_type` in `routes.txt` is the authoritative field.* The
+[GTFS Schedule reference](https://gtfs.org/documentation/schedule/reference/#routestxt) defines
+`route_type` as required, and it describes the vehicle actually operating the route.
+
+*Why the snapshot contains values the base reference does not list.* The base reference enumerates
+only `0`–`7`, `11` and `12`. Victoria also uses Google's **extended route types**, a separate
+hierarchical range (100–1799) that the base reference links out to rather than reproducing. This
+is why `400` looks wrong against the base enum — it is not in it. Decoded, with route counts
+measured in the 23 October 2026 snapshot:
+
+| `route_type` | Source | Meaning | Folder | Routes | Mode |
+| --- | --- | --- | --- | --- | --- |
+| `0` | base | Tram, streetcar, light rail | 3 | 24 | `tram` |
+| `2` | base | Rail (intercity / long-distance) | 1 | 13 | `rail` |
+| `3` | base | Bus | 4, 11 | 560 | `bus` |
+| `102` | extended | Long Distance Trains | 10 | 1 | `rail` |
+| `204` | extended | Regional Coach | 5 | 52 | `bus` |
+| `400` | extended | Urban Railway Service | 2 | 34 | `rail` |
+| `701` | extended | Regional Bus | 4, 6 | 419 | `bus` |
+
+No other values occur. An earlier draft of this section omitted `102`, which would have left
+interstate rail with a null mode.
+
+*Folder numbers and `route_type` numbers are unrelated, and every digit they share means something
+different.* This is a live hazard for anyone reading the code later:
+
+| Digit | As a folder | As a base `route_type` |
+| --- | --- | --- |
+| `1` | Regional Train | Subway, metro |
+| `2` | Metropolitan Train | Rail, intercity |
+| `3` | Metropolitan **Tram** | **Bus** |
+| `11` | **SkyBus** | **Trolleybus** |
+
+Folder 3 is tram while `route_type` 3 is bus; folder 11 is SkyBus while `route_type` 11 is
+trolleybus. Compounding it, folder 1's actual `route_type` is `2` and folder 2's is `400`. Code
+must therefore name which system a value belongs to — the loader keeps `ZONE_MODES` (folder →
+operational branch, provenance) separate from the `route_type` → mode mapping above.
+
+*The two agree.* Derived independently, folder and `route_type` yield the same mode for all eight
+folders, and no folder mixes route types that straddle a mode boundary (folder 4's `3` and `701`
+are both bus). The folder mapping is thus a validated stopgap, not a guess — which matters
+because `route_type` lives in `routes.txt`, so attaching it to a *stop* requires the
+`routes → trips → stop_times → stops` join across a 649 MB file. Version 1 derives mode from the
+folder and asserts agreement with `route_type`; version 2 reverses the direction.
+
+Version 2 has a cheaper route than that join. Transport Victoria separately
+publishes **Public Transport Stops** (GeoJSON, 8 MiB) with a per-stop `MODE`
+property whose eight fixed values match the eight folders exactly, so mode
+arrives per stop without touching `stop_times` at all. Its `STOP_ID` is declared
+`INTEGER`, which cannot represent the 2,564 non-numeric GTFS identifiers — but
+those are 348 stations, 862 entrances and 1,351 wayfinding nodes, and only three
+platforms, so it covers 29,499 of 29,502 platforms. The cost is vintage: that
+dataset was last updated 28 July 2025 while the schedule feed rolls weekly, so
+joining them needs the same match-rate gate as the boundary/Census join in 5.4.
+
+*Three modes, not four, and why.* Earlier drafts of 4.2 listed `coach` as a fourth mode, but 4.6
+never defined `R_coach` — and since `β_m = ln 2 / (R_m/2)`, a mode without a radius cannot be
+evaluated at all. The literature also gives no reason to keep it separate. Mode earns its place in
+the formula for exactly two reasons, and both are about **right-of-way** rather than vehicle
+technology:
+
+1. **Catchment size.** People walk further to higher-quality service, which is why `R_rail` (800 m)
+   exceeds `R_tram` and `R_bus` (400 m).
+2. **Reliability.** PTAL (Wu & Hine, 2003) penalises traffic-exposed modes in average waiting time.
+
+Melbourne trams are rail technology but run in street traffic, so on both counts they group with
+bus, not rail. Regional coach is likewise street-running with a 400 m catchment, so it collapses
+into `bus`. The resulting vocabulary is grade-separated `rail`, street-running fixed-route `tram`,
+and street-running `bus` — which is exactly the three modes 4.6 already parameterises.
 
 ### 5.3 Data verified in this repository
 
@@ -393,18 +469,19 @@ See `backend/scripts/data_viz.py` to generate this visualization from loaded dat
    - apply the ABS 2021→2026 SA1 correspondence to apportion population onto the 2026 boundaries.
    The pipeline must fail validation if the match rate falls below a configured threshold.
 2. **GTFS expires silently.** The feed covers a rolling window. The current metro calendar runs to 31 December 2026, but a stale download can produce zero service. Validation must require at least 14 future days of service.
-3. **Stop records are not all stops.** `location_type` includes stations (1), entrances (2) and generic nodes (3). Only platforms and stations should contribute; platforms must be merged to their parent station to avoid multiplying service.
-4. **Replacement buses.** Metro feeds include `R-Bus` platform codes for disruptions. They must be excluded from normal service counts.
-5. **Times after midnight.** `departure_time` can exceed `24:00:00`; parsing as a clock time silently breaks the window.
-6. **CRS.** The SA1 shapefile is geographic (EPSG:7844). Distance work must reproject to EPSG:7899; publishing GeoJSON must transform back to EPSG:4326.
-7. **Population apportionment.** A hex cell's population is an area-weighted share of its SA1. This is exact only under uniform density; the error is largest in large fringe SA1s and must be stated in the model card.
+3. **`stop_id` is not unique across folders.** Because each operational branch is published as its own feed, a stop served by two branches appears once per branch. The snapshot has 32,063 stop records but only 31,080 distinct `stop_id` values — 983 duplicates, 90 of them inside the Melbourne CBD study area. Loading them under a `(feed_version_id, stop_id)` primary key fails outright, since PostgreSQL rejects an `ON CONFLICT DO UPDATE` whose statement proposes the same key twice. Measurement settles the fix: all 893 colliding identifiers are **0 m apart** with matching names (Flinders Street `11212` is at the same coordinates in both the Regional Train and Metropolitan Train feeds), so they are one physical stop published several times, not an identifier reused for different places. The loader therefore deduplicates on `(stop_id, mode)`, yielding 31,140 rows. Deduplicating on `stop_id` alone would be wrong: 358 stops are genuinely served by two modes (coach and bus, or tram and bus) and must survive as separate stop–mode pairs, which is the unit 4.2 sums over. Service frequency summed across branches belongs in `core.stop_service_hourly`, not in duplicated stop rows. Name collisions need no tiebreak: 45 identifiers carry different names across feeds, but all 45 differ only *between* modes (`12172` is "Pakenham Station" in the rail feeds and "Pakenham Railway Station" in the coach feed), and those rows are kept separately. Within a `(stop_id, mode)` group, names always agree.
+4. **Stop records are not all stops.** `location_type` includes stations (1), entrances (2) and generic nodes (3). Only platforms and stations should contribute; platforms must be merged to their parent station to avoid multiplying service.
+5. **Replacement buses.** Metro feeds include `R-Bus` platform codes for disruptions. They must be excluded from normal service counts.
+6. **Times after midnight.** `departure_time` can exceed `24:00:00`; parsing as a clock time silently breaks the window.
+7. **CRS.** The SA1 shapefile is geographic (EPSG:7844). Distance work must reproject to EPSG:7899; publishing GeoJSON must transform back to EPSG:4326.
+8. **Population apportionment.** A hex cell's population is an area-weighted share of its SA1. This is exact only under uniform density; the error is largest in large fringe SA1s and must be stated in the model card.
 
 ### 5.5 Still required before a full run
 
-- ASGS SA2 boundaries for the roll-up (or a documented SA1→SA2 mapping).
-- A Greater Melbourne study-area definition (GCCSA code `2GMEL`; confirm in the boundary file).
-- The ABS correspondence file if the 2026 boundaries are kept.
+- ASGS **Edition 3** SA2 boundaries for the roll-up. Edition 3 specifically: Edition 4 would reintroduce the vintage mismatch that 5.4 item 1 resolves.
+- A Greater Melbourne study-area definition (GCCSA code `2GMEL`; confirm in the boundary file). The loaders presently filter GTFS stops to eleven named CBD SA2s while loading all of Victoria's SA1s and Census rows, which is asymmetric — one definition should serve every loader (ISSUES.md I-10).
 - The OSM Victoria extract, only for version 2 network distance.
+- *No longer required:* the ABS 2021→2026 correspondence file. Moving to Edition 3 boundaries made it unnecessary, and `core.sa1_correspondence` has been dropped.
 
 ---
 
@@ -419,6 +496,7 @@ See `backend/scripts/data_viz.py` to generate this visualization from loaded dat
 | ASGS Edition 3 digital boundaries | ABS | <https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/digital-boundary-files> | CC BY 4.0 (confirm on download) | 2021-matched boundaries |
 | 2021 Census DataPacks | ABS | <https://www.abs.gov.au/census/guide-census-data/about-census-tools/datapacks> | ABS default licence (CC BY 4.0); confirm | Population by SA1 |
 | OSM Australia extract | Geofabrik | <https://download.geofabrik.de/australia-oceania/australia.html> | ODbL 1.0 | Walking network (v2) |
+| Public Transport Stops | Transport Victoria | <https://opendata.transport.vic.gov.au/dataset/public-transport-stops> | CC BY 4.0 | Authoritative per-stop mode (version 2; see 5.2) |
 | GTFS Realtime | Transport Victoria | <https://opendata.transport.vic.gov.au/dataset/gtfs-realtime> | CC BY 4.0 | Delays (stretch) |
 
 Attribution required in the map and in API metadata: **"Data: Transport Victoria, ABS, © OpenStreetMap contributors"**. Do not redistribute downloaded extracts; publish only derived scores with attribution.
@@ -582,6 +660,11 @@ Design rules:
 - **GiST indexes** on every published geometry.
 - **Composite keys include `feed_version_id` or `model_run_id`**, so historical runs remain queryable.
 - **Alembic migrations** are reviewed in pull requests.
+- **Derived metrics belong in `marts`, not `core`.** `core` holds conformed
+  entities; anything computed from them — nearest-stop distances, catchment
+  counts, scores, roll-ups — is a published result and is read by API views
+  through `ops.active_version`. The first metric tables were built in `core` and
+  are being moved; see ISSUES.md I-03.
 
 ### 7.5 Failure behaviour
 
