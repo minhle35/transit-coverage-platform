@@ -64,6 +64,7 @@ def load(records: list[dict[str, Any]], session: Session) -> int:
             index_elements=[CensusSa1.sa1_code], set_=update_cols
         )
         session.execute(stmt)
+        session.commit()
         total += len(batch)
 
     return total
