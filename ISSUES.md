@@ -10,13 +10,21 @@ Severity: **B** blocks the next phase · **C** correctness risk · **H** hygiene
 
 ## Migration history
 
-### I-19 · C · Half the migrations are untracked in git, and the chain has no replay test
+### I-19 · H · The migration chain replays, but nothing enforces that it keeps doing so
 
-**Resolved:** the chain was briefly unusable — `alembic current` failed with
-`Can't locate revision identified by 'b9fd3f3cc713'` because four migration
-files were absent. They have been restored (one recovered from a dangling git
-blob, `d36cd9e5f9f050168a1a56ce758fffd7bedf3ca4`). The history is now linear
-across eight revisions:
+**Mostly resolved.** The chain was briefly unusable -- `alembic current` failed
+with `Can't locate revision identified by 'b9fd3f3cc713'` because four
+migration files were absent, one of which (`06e1d0060596`) was the only
+migration creating `core.stop.mode`. All were restored, one recovered from a
+dangling git blob (`d36cd9e5f9f050168a1a56ce758fffd7bedf3ca4`), and all nine
+are now committed.
+
+The replay is verified, not merely assumed: the `core`, `marts`, `ops`,
+`staging`, `raw` and `api` schemas were dropped, `alembic upgrade head` ran all
+nine from empty, `alembic check` reported no divergence from the models, and a
+full reload followed. That is the property the breakage violated and that
+`alembic check` alone cannot establish -- it only compares the models against a
+database that may already be correct.
 
     ab32b700b938  initial schema
     8b1fcac40ce6  add gtfs and reference geography tables
@@ -26,42 +34,17 @@ across eight revisions:
     5ba4d9ba9d52  widen_stop_ids  (also drops parent_station, level_id,
                                    wheelchair_boarding, is_station -- see I-06)
     2841096a513b  widen_stop_ids
-    b9fd3f3cc713  stop mode: three-value scoring vocabulary, part of PK  (head)
+    b9fd3f3cc713  stop mode: three-value scoring vocabulary, part of PK
+    bc33e4cdbabe  stop: restore parent_station and wheelchair_boarding
 
-`alembic current` resolves to head and `alembic check` reports no new upgrade
-operations, so the models and the live database agree.
+**What remains.** Nothing automated protects this. The replay was run by hand
+once; the next broken chain will be found the same way. It needs a CI step that
+runs `alembic upgrade head` against an empty database and asserts the result
+matches `Base.metadata`.
 
-**What remains, and it is the actual root cause.** Four of the eight migrations
-are untracked:
-
-    UNTRACKED  20261102_06e1d0060596_add_mode_column_to_stop_populate_from_.py
-    UNTRACKED  20261102_2841096a513b_widen_stop_ids.py
-    UNTRACKED  20261102_5ba4d9ba9d52_widen_stop_ids.py
-    UNTRACKED  20261102_b9fd3f3cc713_stop_mode_three_value_scoring_.py
-
-Untracked files are invisible to `git status` summaries and to every safety net
-git provides, which is how they went missing. Until they are committed, the
-schema cannot be reproduced from a clone: a fresh database would stop at
-`cec7929d5af7`, with no `mode` column on `core.stop`, no three-value check
-constraint, and a two-column primary key.
-
-**Two smaller problems in the restored set.** `5ba4d9ba9d52` and `2841096a513b`
-are both titled `widen_stop_ids` while doing different things — the first also
-drops four columns, which is where I-06's `parent_station` went. And
-`alembic check` only proves the models match *this* database; it does not prove
-the chain replays from empty, which is the property that was actually violated.
-
-**Closing it:**
-
-1. Commit the four untracked migrations. Nothing else is safe until this is done.
-2. Rename the two `widen_stop_ids` revisions to describe what they each do.
-3. Add a CI step that runs `alembic upgrade head` against an empty database and
-   asserts the result matches `Base.metadata` — a replay test, not a diff
-   against a database that is already correct. That is what would have caught
-   this.
-4. Optionally verify the replay locally once by dropping `core`, `marts` and
-   `ops` and running `alembic upgrade head` from scratch. This also clears the
-   571 stale rows in I-09, so the two are worth doing together.
+Also unaddressed: `5ba4d9ba9d52` and `2841096a513b` are both titled
+`widen_stop_ids` while doing different things, the first also dropping four
+columns. Worth renaming so the history reads honestly.
 
 ## Blocking Phase 1 completion
 
@@ -184,36 +167,45 @@ which match the 2021 Census exactly — `core.area_sa1.sa1_code` joins
 
 ## Pipeline correctness
 
-### I-09 · C · The loaders have no delete path, so narrowing scope leaves orphans
+### I-09 · RESOLVED · Scope moved out of the loaders
 
-`core.stop` holds **1,223 rows, of which 571 fall outside the Melbourne CBD
-study area** — residue from statewide loads that ran before the CBD filter was
-added. Verified by `ST_Within` against the CBD SA2 polygons: 652 inside
-(rail 224, bus 242, tram 186), 571 outside.
+The 571 orphan rows are gone, and the cause with them. `core.stop` now holds
+the whole feed -- 31,140 stop-mode pairs, 29,266 of them service-carrying --
+and study-area scope is a read-time predicate instead of a load filter.
 
-Every loader upserts via `ON CONFLICT DO UPDATE` and never deletes. Because both
-loads share one `feed_version_id` (the same ZIP), there is no version boundary
-to filter the stale rows out by. Those 571 stops would be matched as "nearest
-stop" by SA1s whose catchments they should never enter, silently corrupting
-every Phase 1 metric.
+The database was also rebuilt from empty to confirm it: all nine migrations
+replayed with `alembic upgrade head`, `alembic check` clean, then a full
+reload. That doubled as the replay verification I-19 had never had.
 
-**Closing it:** short term, truncate and reload. Properly, this is what README
-7.5's atomic promotion exists to prevent: load into `staging` under a new
-`feed_version_id`, validate, then swap `ops.active_version` in one transaction.
-Phase 4 work, but the truncate cannot wait for it.
+Scope belonged in the wrong layer. README 7.4 defines `core` as "versioned,
+conformed entities" -- the feed as received -- so filtering during load made
+`core.stop` a partial record, which is exactly why narrowing it left rows with
+no version boundary to filter them out by.
 
-### I-10 · C · Study-area scope is applied asymmetrically across loaders
+It was wrong numerically too, which is the stronger reason. Measured against
+the full feed: 494 service-carrying stops sit inside the eleven CBD SA2s, but
+**245 more sit outside the boundary within 400 m of it**, and 442 within
+800 m. A stop across the boundary still serves residents inside it, so the old
+filter truncated a third of the relevant 400 m supply, and nearly half the
+800 m supply, for every boundary SA1.
 
-`gtfs.extract()` filters stops to the eleven Melbourne CBD SA2s, but the
-geography and Census loaders load all of Victoria: 15,478 SA1s and 15,482 Census
-rows against 652 stops. Phase 1 would therefore compute "distance to nearest
-stop" for ~15,000 SA1s whose nearest in-scope stop is tens of kilometres away,
-producing a table that is 96% meaningless rows.
+Still open, and not fixed by this: the loaders cannot handle a *shrinking*
+input. A stop removed from a future feed will linger, because the upsert has
+no delete path. That is Phase 4's staging-and-promotion work (README 7.5).
 
-**Closing it:** one study-area definition, applied by every loader — a shared
-`app/study_area.py` holding the SA2 name list (currently duplicated between
-`loaders/gtfs.py` and `scripts/data_viz.py`), or better, the GCCSA code `2GMEL`
-that README 5.5 already names.
+### I-10 · RESOLVED · One study-area definition, applied at read time
+
+`app/study_area.py` now holds it once. The loaders no longer disagree about
+scope, because none of them filters: geography, Census and GTFS all load
+everything the source publishes.
+
+The definition also changed. The GTFS loader had been filtering to eleven
+inner SA2s -- 237 SA1s and 100,256 people, about **2%** of the study area
+README 1.3 and 1.4 actually commit to. The project scope is now the ABS GCCSA
+code `2GMEL`, Greater Melbourne: 11,487 SA1s and 4,917,633 people, carried on
+`core.area_sa1.gcc_code`. The CBD set survives as a documented development
+subset for fast iteration and for `scripts/data_viz.py`, never as a load
+filter.
 
 ### I-11 · C · After-midnight departure times are not yet handled
 
@@ -290,8 +282,8 @@ currently names for version 2. Its risk is vintage: last updated 28 July 2025
 against a weekly GTFS feed, so it needs the same match-rate validation gate as
 the boundary/Census join.
 
-### I-18 · H · The study-area SA2 list is duplicated
+### I-18 · RESOLVED · The duplicated SA2 list is gone
 
-`MELBOURNE_CBD_SA2_NAMES` in `loaders/gtfs.py` and `CBD_SA2_NAMES` in
-`scripts/data_viz.py` are separate copies of the same eleven names. They will
-drift. See I-10.
+Both copies are replaced by `app.study_area.MELBOURNE_CBD_SA2_NAMES`.
+`scripts/data_viz.py` imports it (the package is installed editable, so no
+path manipulation is needed) and the GTFS loader no longer needs it at all.

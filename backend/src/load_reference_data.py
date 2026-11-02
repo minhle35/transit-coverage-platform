@@ -43,7 +43,7 @@ def main() -> None:
     print(f"core.census_sa1: upserted {n_pop} rows")
 
     print(f"Reading GTFS from {GTFS_ROOT}")
-    feed_version_id, stops_df = gtfs.extract(GTFS_ROOT, sa1_shapefile=SHAPEFILE)
+    feed_version_id, stops_df = gtfs.extract(GTFS_ROOT)
     stops = gtfs.transform(feed_version_id, stops_df)
 
     with db.get_session() as session:

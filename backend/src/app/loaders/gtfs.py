@@ -60,68 +60,14 @@ SCORING_MODES = {
     "5": "bus",  # Regional Coach      route_type 204
 }
 
-# Melbourne CBD SA2 regions (filter to these for MVP)
-MELBOURNE_CBD_SA2_NAMES = [
-    "Melbourne CBD - East",
-    "Melbourne CBD - North",
-    "Melbourne CBD - West",
-    "East Melbourne",
-    "Melbourne Airport",
-    "North Melbourne",
-    "Port Melbourne",
-    "Port Melbourne Industrial",
-    "South Melbourne",
-    "West Melbourne - Industrial",
-    "West Melbourne - Residential",
-]
+def extract(gtfs_root: Path) -> tuple[str, pd.DataFrame]:
+    """Read stops.txt from every GTFS zone, compute the feed version hash.
 
+    Returns (feed_version_id, combined_stops_df). feed_version_id is the
+    SHA-256 of the most recent google_transit.zip across all zones.
 
-def _filter_to_cbd(stops_df: pd.DataFrame, sa1_shapefile: Path) -> pd.DataFrame:
-    """Keep only stops falling inside a MELBOURNE_CBD_SA2_NAMES polygon.
-
-    stops.txt carries no SA2 code, so membership is a spatial join against the
-    ASGS boundaries rather than an attribute lookup. Containment, not bounding
-    box: the CBD set includes Melbourne Airport, whose envelope would otherwise
-    drag in most of the northern suburbs.
-    """
-    boundaries = gpd.read_file(sa1_shapefile)
-
-    name_col = next(
-        (c for c in ("SA2_NAME21", "SA2_NAME26") if c in boundaries.columns), None
-    )
-    if name_col is None:
-        raise ValueError(
-            f"No SA2_NAME column in {sa1_shapefile.name}. "
-            f"Available: {boundaries.columns.tolist()}"
-        )
-
-    cbd = boundaries[boundaries[name_col].isin(MELBOURNE_CBD_SA2_NAMES)]
-    if cbd.empty:
-        raise ValueError(f"No SA1s matched MELBOURNE_CBD_SA2_NAMES on {name_col}")
-
-    stops_gdf = gpd.GeoDataFrame(
-        stops_df,
-        geometry=gpd.points_from_xy(stops_df["stop_lon"], stops_df["stop_lat"]),
-        crs=WGS84_CRS,
-    )
-    cbd_dissolved = cbd.to_crs(WGS84_CRS).dissolve()[["geometry"]]
-
-    joined = gpd.sjoin(stops_gdf, cbd_dissolved, predicate="within", how="inner")
-    return pd.DataFrame(joined[stops_df.columns])
-
-
-def extract(
-    gtfs_root: Path, sa1_shapefile: Path | None = None
-) -> tuple[str, pd.DataFrame]:
-    """Read stops.txt from all GTFS zones, compute feed version hash.
-
-    Returns (feed_version_id, combined_stops_df).
-    feed_version_id is the SHA-256 of the most recent google_transit.zip across all zones.
-
-    Args:
-        gtfs_root: Path to GTFS data root directory
-        sa1_shapefile: If given, restrict stops to the Melbourne CBD SA2s in
-            MELBOURNE_CBD_SA2_NAMES. Omit to load all of Victoria.
+    Loads the whole feed. Study-area scope is applied where results are
+    computed, not here -- see app/study_area.py for why.
     """
     all_stops = []
     latest_zip_path = None
@@ -162,9 +108,6 @@ def extract(
     feed_version_id = hashlib.sha256(latest_zip_path.read_bytes()).hexdigest()
     print(f"Feed version SHA-256: {feed_version_id}")
 
-    if sa1_shapefile is not None:
-        combined = _filter_to_cbd(combined, sa1_shapefile)
-        print(f"Melbourne CBD only: {len(combined)} stops")
     print()
 
     return feed_version_id, combined
