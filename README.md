@@ -688,13 +688,16 @@ Only Nginx is exposed publicly. The database and Airflow stay on the internal ne
 
 | Part | State |
 | --- | --- |
-| Data acquisition and profiling | Done for the 23 Oct 2026 snapshot (`backend/src/main.py`; reference geography and population loaded) |
-| PostGIS schema and migrations | Done: 9 Alembic revisions applied; reference geography, population, GTFS stops loaded; `stop_service_hourly` table exists but unpopulated |
+| **Phase 0: Data Foundation** | ✅ **Complete** — SA1 boundaries, 2021 Census population, GTFS stops (31,438 unique stop-mode pairs) loaded to `core`; `ops.feed_version` and `ops.active_version` populated; schema finalized with 9 Alembic revisions |
 | Docker Compose scaffold | Present; references outdated paths; infrastructure needs alignment with backend layout |
-| `transitcov` library (scoring functions) | Planned |
-| Airflow DAGs (frequency aggregation, scoring, promotion) | Planned |
-| FastAPI service | Planned |
-| React map | Planned |
+| **Phase 1: PostGIS Spatial Core** | Planned — SQL functions (`nearest_stop_by_mode`, `stops_within_radius`, `max_departures_in_catchment`), proximity queries, `marts.stop_accessibility_score` |
+| **Phase 2: Accessibility Scoring** | Planned — Service aggregation (`stop_service_hourly` populated), scoring formula, `marts.score_sa1` and `marts.score_cell` |
+| **Phase 3: Census Equity Analysis** | Planned — SA2 loader, equity metrics, `marts.coverage_sa2` |
+| **Phase 4: Airflow Orchestration** | Planned — DAG (check_upstream → download → validate → load → aggregate → quality_gates → promote → scores) |
+| **Phase 5: REST API** | Planned — FastAPI endpoints, OAuth2, read-only role |
+| **Phase 6: Documentation** | Planned — methodology, data dictionary |
+| **Phase 7: React Dashboard** | Planned — Choropleth map, mode filter, equity summary |
+| **Phase 8: Docker Reproducibility** | Planned — `docker compose up` end-to-end |
 | CI/CD | Planned |
 
 ---

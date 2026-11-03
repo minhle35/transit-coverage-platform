@@ -11,7 +11,7 @@ touch the other's already-committed rows.
 
 from pathlib import Path
 
-from app.loaders import census, db, geo, gtfs
+from app.loaders import census, db, feed_version, geo, gtfs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = ROOT / "data"
@@ -43,14 +43,26 @@ def main() -> None:
     print(f"core.census_sa1: upserted {n_pop} rows")
 
     print(f"Reading GTFS from {GTFS_ROOT}")
-    feed_version_id, stops_df = gtfs.extract_zipped_files(GTFS_ROOT)
+    feed_version_id, stops_df = gtfs.extract(GTFS_ROOT)
     stops = gtfs.transform(feed_version_id, stops_df)
 
     with db.get_session() as session:
         n_stops = gtfs.load(stops, session)
+        print(f"core.stop: upserted {n_stops} rows")
 
-    print(f"core.stop: upserted {n_stops} rows")
-    print(f"Feed version: {feed_version_id}")
+        # Record feed version metadata
+        row_counts = {
+            "core.stop": n_stops,
+            "core.area_sa1": n_areas,
+            "core.census_sa1": n_pop,
+        }
+        metadata = feed_version.extract_metadata(
+            feed_version_id=feed_version_id,
+            source_url="https://www.transport.vic.gov.au/gtfs/prod/google_transit.zip",
+            row_counts=row_counts,
+        )
+        feed_version.load_feed_version(metadata, session, set_active=True)
+        print(f"ops.feed_version: recorded metadata for {feed_version_id}")
 
 
 if __name__ == "__main__":
