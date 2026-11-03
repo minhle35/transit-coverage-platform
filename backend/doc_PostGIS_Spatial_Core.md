@@ -63,3 +63,168 @@ Reasons:
 - GeoPandas can create a spatial index (RTree) but it will only for data already exist in memory
 - Queries like "stops within 400m" needs to prune candidates before computing distance
 - PostGIS GiST indexes live on disk; they're consulted automatically by the query planner
+
+## Design functions to build SQL functions for metrics
+
+We later will compute the score function
+```
+score = (
+  distance_decay(closest_rail_m) + catchment_bonus(rail_within_800m) + frequency_weight(max_depth_hr_400m)
+)
+```
+we need to prepare the functions to compute distance to the nearest stop, how many within reach, what's best frequency.
+
+In other words, we want to capture:
+- is transit reachable? (distance)
+- is transit resilient? (coverage/redundancy)
+- is service frequent? (frequency)
+
+#### 1. Distance -  How far away is the closest stop?
+Distance is a function of (sa1_centroid, 'rail', feed_version)
+-> Returns: stop_id = "stop_123", distance_m = 750
+
+- This is a foundational metric to understand/measure accessibility later
+- Different modes have different walkability (rail: 800m acceptable, tram: 400m)
+- We need to answer this question: "Is my neighborhood walkable to transit at all?"
+
+##### First we find a random location to make it as our current location
+```
+-- Get 5 random SA1s from Melbourne CBD area
+SELECT 
+    sa1_code,
+    sa2_name,
+    ST_AsText(ST_Centroid(geom)) AS centroid_7899,
+    ST_AsText(ST_Transform(ST_Centroid(geom), 4326)) AS centroid_latlon
+FROM core.area_sa1
+WHERE gcc_code = '2GMEL' # Great Melbourne
+ORDER BY RANDOM()
+LIMIT 5;
+
+```
+- we use `ST_AsText` to converts a spatial geometry object into its Well-Known Text (WKT) string representation (e.g., POINT(144.96 -37.81)), making it human-readable
+- `ST_Centroid()` to compute the geometric center (centroid) of the given geometry (geom)
+
+Result - we choose one of them for an example
+```
+  sa1_code   |          sa2_name           |                centroid_7899                 |                centroid_latlon                
+-------------+-----------------------------+----------------------------------------------+-----------------------------------------------
+ 21204156514 | Keysborough - North         | POINT(2515884.7823238275 2390262.569348505)  | POINT(145.18082620963267 -37.98870718225923)
+ 20802142713 | Bentleigh East - South      | POINT(2505756.8189697284 2396395.771924024)  | POINT(145.06548544005065 -37.933568424334354)
+ 21201155201 | Pakenham - South West       | POINT(2538546.442417804 2380687.372732103)   | POINT(145.43929816404884 -38.07430631486971)
+ 20903121408 | Research - North Warrandyte | POINT(2519131.0622909167 2419461.8914679517) | POINT(145.2170227459051 -37.725564533100425)
+ 21204146004 | Noble Park - West           | POINT(2515404.824148035 2392356.5644168435)  | POINT(145.17531866604725 -37.96984969987287)
+(5 rows)
+
+```
+
+- We can use convert into lat/lon by using
+```
+SELECT ST_AsText(
+    ST_Transform(
+        ST_GeomFromText('POINT(XXXXXXX YYYYYYY)', 7899),
+        4326  -- Convert to lat/lon (WGS84)
+    )
+) AS latlon;
+
+```
+For example:
+```
+SELECT ST_AsText(
+    ST_Transform(
+        ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899),
+        4326  -- Convert to lat/lon (WGS84)
+    )
+) AS latlon;
+```
+
+##### Second, we get only the CLOSEST stop
+```
+EXPLAIN ANALYZE
+SELECT 
+  stop_id, 
+  stop_name, 
+  geom, 
+  ST_Distance(geom, ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899)) AS distance_m
+FROM core.stop
+WHERE mode = 'tram'
+ORDER BY distance_m ASC
+LIMIT 1;
+```
+
+Result:
+```
+ stop_id |                   stop_name                   |                        geom                        |     distance_m     
+---------+-----------------------------------------------+----------------------------------------------------+--------------------
+ 21127   | Vermont South Shopping Centre/Burwood Hwy #75 | 0101000020DB1E00004F8BB6EA193243414E65352527594241 | 14680.342557173759
+(1 row)
+```
+
+**This answers the question: What's the single closet tram stop from the given location**
+
+##### Third, we can use `<->` operator for speed
+We can add `feed_version` filtering for some purposes like
+- loading: know which feed is current
+- query: filter to only current feed's stops
+- scoring: ensure scores match the feed used
+- history: track which feed produced which score
+- rollback: switch back to previous feed if needed
+
+
+```
+EXPLAIN ANALYZE
+SELECT
+    stop_id,
+    stop_name,
+    geom,
+    ST_Distance(geom, ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899)) AS distance_m
+FROM core.stop
+WHERE
+  mode = 'tram'
+  AND feed_version_id = 'b4e53d2f9c8e8f7g6d5c4b3e2f1g0b9c8d7e6f5g4b3c1d0e9f8a7c6d5e4d2'
+
+ORDER BY geom <-> ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899)
+LIMIT 1;
+```
+
+- **Query to get feed_version_id**
+
+```
+SELECT feed_version_id FROM ops.active_version WHERE id = 1;
+```
+
+##### Fourth, parametrize it (function argument)
+- Turn this into reusable function where we pass the origin, mode, feed_version
+
+```
+CREATE OR REPLACE FUNCTION core.nearest_stop_by_mode(
+  p_origin_geom GEOMETRY,
+  p_mode VARCHAR,
+  p_feed_version VARCHAR
+)
+RETURNS TABLE(
+  stop_id VARCHAR,
+  distance_m FLOAT,
+  stop_name VARCHAR,
+  geom GEOMETRY,
+  geom_4326 GEOMETRY
+)
+LANGUAGE SQL
+STABLE LEAKPROOF
+AS $$
+  SELECT
+        s.stop_id,
+        ST_Distance(s.geom, p_origin_geom) AS distance_m,
+        s.stop_name,
+        s.geom,
+        s.geom_4326
+    FROM core.stop AS s
+    WHERE
+        s.mode = p_mode
+        AND s.feed_version_id = p_feed_version
+    ORDER BY s.geom <-> p_origin_geom
+    LIMIT 1;
+$$
+```
+
+
+2. 
