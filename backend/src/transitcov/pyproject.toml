@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "transitcov"
+version = "0.1.0"
+description = "Pure-function library for transit accessibility scoring"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "CC BY 4.0"}
+authors = [
+    {name = "Thao Minh Le", email = "aohkhnimel@gmail.com"}
+]
+
+dependencies = [
+    "geopandas>=0.14",
+    "pandas>=2.0",
+    "shapely>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "geopandas>=0.14",
+    "pandas>=2.0",
+    "shapely>=2.0",
+    "numpy>=1.24",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Repository = "https://github.com/minhle35/transit-coverage-platform"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transitcov"]
