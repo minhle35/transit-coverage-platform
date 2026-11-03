@@ -106,19 +106,8 @@ jobs:
           print('✓ Import boundaries OK: transitcov has no app/db imports')
           "
 
-      - name: Generate coverage report
-        working-directory: backend
-        run: |
-          uv run python -m pytest tests/test_loader_*.py --cov=src/app --cov-report=term-missing --cov-report=html
-          uv run python -m pytest src/transitcov/tests/ --cov=src/transitcov/src/transitcov --cov-report=term-missing
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./backend/htmlcov
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+      # Note: Coverage reports can be generated locally with pytest-cov
+      # For CI, we just ensure tests pass. See .github/TESTING.md for local coverage.
 
   lint:
     runs-on: ubuntu-latest
