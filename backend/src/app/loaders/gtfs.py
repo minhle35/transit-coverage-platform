@@ -60,7 +60,8 @@ SCORING_MODES = {
     "5": "bus",  # Regional Coach      route_type 204
 }
 
-def extract(gtfs_root: Path) -> tuple[str, pd.DataFrame]:
+
+def extract_zipped_files(gtfs_root: Path) -> tuple[str, pd.DataFrame]:
     """Read stops.txt from every GTFS zone, compute the feed version hash.
 
     Returns (feed_version_id, combined_stops_df). feed_version_id is the
