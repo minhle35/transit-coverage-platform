@@ -180,7 +180,7 @@ SELECT
 FROM core.stop
 WHERE
   mode = 'tram'
-  AND feed_version_id = 'b4e53d2f9c8e8f7g6d5c4b3e2f1g0b9c8d7e6f5g4b3c1d0e9f8a7c6d5e4d2'
+  AND feed_version_id = '45bc616b049bcaf169f8703f17520cf212cc16e8f3b480d26998ead6c6bf72ad'
 
 ORDER BY geom <-> ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899)
 LIMIT 1;
@@ -226,5 +226,38 @@ AS $$
 $$
 ```
 
+**Last few steps: save the SQL function file and call it in alembic version file **
+```
+Step 1:
+Write the function in sql/your_function.sql.
+Step 2:
+Generate the migration file using the command
+Step 3:
+Open the generated file and add the single line to read and execute your .sql file
+Step 4:
+Run the migration
+alembic upgrade head
+```
+
+
+##### Check the function after migration
+- Connect to the database (via docker)
+- in psql use these command: `\df` core.nearest_stop_by_mode
+- SQL query to access the built-in system view to view the metadata about stored functions, procedures, methods
+```
+SELECT routine_name, routine_type, routine_definition
+FROM information_schema.routines
+WHERE routine_schema = 'core'
+AND routine_name = 'nearest_stop_by_mode';
+```
+
+- Test on real data point
+```
+
+SELECT * FROM core.nearest_stop_by_mode(
+  ST_GeomFromText('POINT(2515884.7823238275 2390262.569348505)', 7899),
+  'tram',
+  '45bc616b049bcaf169f8703f17520cf212cc16e8f3b480d26998ead6c6bf72ad'
+);
 
 2. 
