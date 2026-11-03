@@ -474,6 +474,74 @@ SELECT core.max_departures_in_catchment(
 
 ---
 
+## Why a Python Query Wrapper Layer?
+
+Although PostGIS SQL functions are powerful and efficient, they should NOT be called directly from arbitrary application code. Instead, STEP 5 introduces a thin wrapper module (`app/queries/proximity.py`) that sits between the application and the database.
+
+### Design Principle: PostGIS is the System of Record
+
+**PostGIS owns all spatial logic. Python owns integration.**
+
+The wrapper layer enforces this separation:
+- **PostGIS (SQL)**: Authoritative implementations of spatial operations (index usage, distance calculations, aggregations)
+- **Python wrapper**: Type-safe interface, parameter validation, documentation, single source of truth
+- **Application**: Never calls SQL directly; always goes through the wrapper
+
+### Benefits of the Wrapper Layer
+
+#### 1. **Single Source of Truth for How to Call These Functions**
+Without a wrapper, code everywhere might call `core.nearest_stop_by_mode()` differently:
+- Some queries might forget to filter by `feed_version_id`
+- Some might use wrong CRS or parameter types
+- Some might expect different return columns
+
+The wrapper centralizes this, ensuring every caller uses the same interface.
+
+#### 2. **Type Safety & Clean Python API**
+Direct SQL calls return raw database rows. The wrapper exposes:
+```python
+def nearest_stop_by_mode(session, origin_geom, mode, feed_version) -> Row | None:
+```
+
+Instead of scattered SQL strings, callers get type hints and IDE completion. The documentation (Args/Returns/Examples) lives in one place.
+
+#### 3. **Isolation from SQL Changes**
+If we later optimize a SQL function or change its signature, we update ONLY the wrapper. All application code continues unchanged:
+- Rename parameters? Update wrapper.
+- Add a new index hint? Update SQL, wrapper stays same.
+- Switch to a materialized view? Wrapper abstracts it away.
+
+Without isolation, a SQL change would ripple across 20+ call sites.
+
+#### 4. **Easier Testing & Mocking**
+Tests can mock the wrapper's return values without touching the database:
+```python
+@patch("app.queries.proximity.nearest_stop_by_mode")
+def test_my_feature(mock_nearest):
+    mock_nearest.return_value = Row(stop_id="123", distance_m=400, ...)
+    # Test application logic without DB
+```
+
+Or run integration tests against real SQL, with confidence the wrapper contract is respected.
+
+#### 5. **Parameter Validation & Error Handling**
+The wrapper is the logical place to:
+- Validate that `radius_m > 0` before querying
+- Check that `mode` is one of ('rail', 'tram', 'bus', 'coach')
+- Convert user errors into meaningful messages, not raw database errors
+- Log queries for performance debugging
+
+#### 6. **Documentation & API Contract**
+Each wrapper function documents:
+- What each parameter means (CRS, units, expected values)
+- What return types mean (None vs empty list vs 0)
+- Typical use cases and examples
+- Edge cases and error conditions
+
+This becomes the authoritative API contract for everyone on the team.
+
+---
+
 ## Summary: Three Functions, Three Dimensions of Accessibility
 
 | Function | Metric | Returns | Answer |
@@ -483,3 +551,25 @@ SELECT core.max_departures_in_catchment(
 | max_departures_in_catchment() | Frequency | 1 integer | How good is service? |
 
 Together, these three functions form the foundation for the accessibility score (see README 4.1).
+
+### Calling These Functions
+
+**Never** call the SQL functions directly from application code. **Always** go through the Python wrapper in `app/queries/proximity.py`:
+
+```python
+from app.queries.proximity import nearest_stop_by_mode
+from geoalchemy2 import Geometry
+from sqlalchemy.orm import Session
+
+# ✓ Correct: use the wrapper
+result = nearest_stop_by_mode(session, origin_point, 'tram', feed_version_id)
+
+# ✗ Wrong: don't call SQL directly
+session.execute(text("SELECT ... FROM core.nearest_stop_by_mode(...)"))
+```
+
+The wrapper ensures:
+- Type safety (Python types, not raw Row objects)
+- Consistent parameter order and naming
+- Centralized documentation and error handling
+- Easier testing and future refactoring
