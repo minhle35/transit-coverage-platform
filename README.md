@@ -4,7 +4,7 @@
 
 The platform is built on open data (GTFS, ABS boundaries, 2021 Census) and open software (PostGIS, GeoPandas, Airflow, FastAPI, React/MapLibre). It is designed to refresh weekly, to keep the last good version live when a data load fails, and to state the feed and model version behind every number it returns.
 
-> **Status (2 November 2026).** Reference geography and population are loaded: 15,478 SA1 polygons (ASGS Edition 3) and 15,482 Census G01 rows, joining at 99.97%. GTFS stops load for the whole feed -- 31,140 stop-mode pairs, 29,266 of them service-carrying -- with dual-CRS geometries and a three-mode vocabulary; study-area scope (GCCSA `2GMEL`, Greater Melbourne) is applied where results are computed, not at load time. Still to build: scheduled frequency (`core.stop_service_hourly` is modelled but empty, so the score in section 4 cannot yet be evaluated), the PostGIS metric functions, the `transitcov` library, ingestion DAGs, the API and the web map. Known defects and gaps are tracked in [ISSUES.md](ISSUES.md); the phased build-out is in `drafts/plans.md`. The Alembic history is linear across nine revisions, all committed, and has been verified to replay from an empty database. Numbers in this README were measured against the local `data/` snapshot unless stated otherwise.
+> **Status (2 November 2026).** Reference geography and population are loaded: 15,478 SA1 polygons (ASGS Edition 3) and 15,482 Census G01 rows, joining at 99.97%. GTFS stops load for the whole feed -- 31,438 stop-mode pairs, 29,266 of them service-carrying -- with dual-CRS geometries and a three-mode vocabulary; study-area scope (GCCSA `2GMEL`, Greater Melbourne) is applied where results are computed, not at load time. Still to build: scheduled frequency (`core.stop_service_hourly` is modelled but empty, so the score in section 4 cannot yet be evaluated), the PostGIS metric functions, the `transitcov` library, ingestion DAGs, the API and the web map. Known defects and gaps are tracked in [ISSUES.md](ISSUES.md). The Alembic history is linear across nine revisions, all committed, and has been verified to replay from an empty database. Numbers in this README were measured against the local `data/` snapshot unless stated otherwise.
 
 **Contents**
 
@@ -28,15 +28,15 @@ A resident, planner or advocate should be able to ask a simple question:
 
 > *For this place, how much scheduled public transport can I actually reach on foot in the morning peak — and how does that compare with the rest of the city?*
 
-Existing tools do not answer it well. A journey planner answers "how do I get from A to B at 08:12?" A stop map answers "where is the nearest stop?" Neither answers "how well served is this neighbourhood, consistently, across the whole city, this week?"
+Existing tools answer adjacent questions. A journey planner answers "how do I get from A to B at 08:12?"; a stop map answers "where is the nearest stop?"; research platforms such as SNAMUTS publish rich frequency-based accessibility analyses for Australian cities, but as periodic studies rather than as a service that refreshes with each GTFS update. Neither provides a query of the form "how well served is this neighbourhood, consistently, across the whole city, this week?" — with provenance, automation, and fresh data.
 
 The distinction matters. Two addresses 300 m apart can have very different access: one is near a tram every eight minutes, the other near a bus twice an hour. A stop count treats them the same. A coverage score should not.
 
 ### 1.2 Why the question is hard
 
-1. **Proximity is not service.** A stop 200 m away with two departures a day is not meaningful access. Frequency, mode and walking distance interact.
+1. **Frequency, not proximity, defines service.** A stop 200 m away with two departures a day is not meaningful access; a stop 500 m away with a bus every 5 minutes is. Frequency, mode and walking distance interact as a system, not as separate measures.
 2. **The data is fragmented.** Timetables come as GTFS from Transport Victoria, boundaries and population from the ABS, and the walking network from OpenStreetMap. They arrive in different formats, coordinate reference systems, vintages and update cycles.
-3. **The scale is large.** Victoria has 16,092 SA1s in the 2026 geography, Greater Melbourne spans tens of thousands of 250 m cells, and a single bus `stop_times.txt` file is 649 MB. Naive in-memory processing does not fit on a small server.
+3. **The scale is large.** Victoria has 15,478 SA1s (ASGS Edition 3, matched to 2021 Census). Greater Melbourne spans ~185,000 of 250 m cells, and a single bus `stop_times.txt` file is 649 MB. Naive in-memory processing does not fit on a small server. The cell count is derived from GCCSA area (~10,000 km²) divided by cell area (~0.05 km² per hexagon ~250 m flat-to-flat, where area = (3√3/2)r² with r = 144.3 m), giving ~185,000 cells across the study area.
 4. **Comparability is fragile.** A score is only useful if it means the same thing from one weekly run to the next. Changing a parameter, a boundary vintage or a feed silently breaks comparisons.
 5. **Averages hide the distribution.** A citywide mean can look acceptable while specific communities have no frequent service. Equity analysis needs population-weighted tails, not just a headline number.
 6. **Provenance is usually missing.** Published maps rarely say which feed, which Census year and which model produced a colour. Without that, a score cannot be audited or reproduced.
@@ -86,15 +86,15 @@ The implication for the product is that a single citywide average is not enough.
 
 ### 2.4 GTFS and fine-grained measurement
 
-GTFS makes scheduled service machine-readable at stop and trip level, so coverage can be recomputed whenever the timetable changes. Tribby and Zandbergen (2012) demonstrated high-resolution spatio-temporal modelling of transit accessibility from GTFS; Mavoa et al. (2012) combined transit and walking for destination access in Auckland; and Owen and Levinson (2015) showed that continuous transit accessibility to jobs is associated with commute mode share. These results support GTFS as the right input and a defined time window as the right unit of analysis.
+GTFS makes scheduled service machine-readable at stop and trip level, so coverage can be recomputed whenever the timetable changes. Tribby and Zandbergen (2012) demonstrated high-resolution spatio-temporal modelling of transit accessibility from GTFS; Mavoa et al. (2012) combined transit and walking for destination access in Auckland; and Owen and Levinson (2015) showed that continuous transit accessibility across departure times is associated with commute mode share. These results support GTFS as the input and temporal resolution as essential. Version 1 uses a fixed 07:00–09:00 window for tractability, which is a known limitation listed in §4.11.
 
 They also expose the main cost: true access depends on network travel time, not straight-line distance. Version 1 uses straight-line distance in a metric CRS and states that limitation. The distance function is isolated behind a single interface, so a network engine (r5py, pandana, pgRouting or a custom OSM graph) can replace it without changing the scoring formula.
 
 ### 2.5 Spatial support and the hex grid
 
-SA1s are the finest published Census geography with full population counts, which makes them the natural unit for population statistics. They are not, however, uniform in size or shape: large fringe SA1s blur internal variation, and irregular polygons make visual comparison difficult. A regular hex grid reduces the orientation bias and edge effects of a square grid because each cell has six equidistant neighbours (Birch, Oom & Beecham, 2007).
+SA1s are the finest geography for which the ABS publishes the full set of Census tables. Mesh Blocks are finer but carry only person and dwelling counts, so they cannot support the attribute work later versions may need. SA1s are not, however, uniform in size or shape: large fringe SA1s blur internal variation, and irregular polygons make visual comparison difficult. A regular hex grid reduces the orientation bias and edge effects of a square grid because each cell has six equidistant neighbours (Birch, Oom & Beecham, 2007).
 
-The platform therefore uses **two spatial supports on purpose**: SA1s for population-weighted statistics, and ~250 m hexagons for the map. Population on a hex cell is an area-weighted share of its SA1, which is exact only under uniform density. That approximation is documented rather than hidden.
+The platform therefore uses **two spatial supports on purpose**: SA1 score is the representative-point score and ~250 m hexagons for the map. Population on a hex cell is an area-weighted share of its SA1, which is exact only under uniform density. That approximation is documented rather than hidden.
 
 ### 2.6 The gap this project fills
 
@@ -202,9 +202,9 @@ The scoring function must:
 
 ### 4.3 Service frequency
 
-For each stop and mode, count `pickup_type = 0` departures whose `departure_time` falls inside the window (07:00–09:00 on a typical weekday) and divide by the window length in hours. GTFS times may exceed `24:00:00` for after-midnight service, so times are parsed as durations, not clock times. Platforms under the same `parent_station` are merged per mode; replacement-bus stops (`R-Bus`) are excluded.
+For each stop and mode, select one **representative weekday** (Mon–Fri per `calendar.txt` with no `calendar_dates.txt` exceptions; or average across all exception-free weekdays). Count departures where `pickup_type IS NULL OR pickup_type = 0` (both indicate regular pickup) in the 07:00–09:00 window, then divide by 2 hours. GTFS times may exceed `24:00:00` for after-midnight service, so times are parsed as durations, not clock times. Platforms under the same `parent_station` are merged per mode; replacement-bus stops (`R-Bus`) are excluded.
 
-Frequency is capped at `f_cap` because the marginal value of a departure falls sharply once waiting time is short: beyond a bus every five minutes, the tenth extra departure matters little to the score.
+Frequency is capped at `f_cap` because the utility of additional departures falls sharply once waiting time is short. At a ~10-minute headway, passengers switch from random arrival to timetable-based planning; departures beyond `f_cap` change mode choice, not service usage.
 
 ### 4.4 Catchment and decay
 
@@ -230,9 +230,9 @@ These are explicit assumptions to calibrate and publish, not empirical facts.
 | --- | --- | --- | --- |
 | `R_rail` | 800 m | Common planning rule of thumb for rail access | Assumption |
 | `R_tram`, `R_bus` | 400 m | Common planning rule of thumb for street-level access | Assumption |
-| `w_m` | rail 1.0, tram 0.8, bus 0.8 | PTAL penalises traffic-exposed modes through a reliability term in average waiting time (rail 0.75 min, bus 2.0 min); `w_m` carries that here rather than being neutral | Assumption, from Wu & Hine (2003) |
-| `f_cap` | 12 departures/hour | Beyond a five-minute headway, waiting time barely changes | Assumption |
-| `k` | 5.0 | Sets a readable scale; frozen after the first full run | To calibrate once |
+| `w_m` | rail 1.0, tram 0.8, bus 0.8 | PTAL penalises traffic-exposed modes through a reliability term in average waiting time (rail 0.75 min, bus 2.0 min). Version 1 approximates this as a constant weight, which matches the PTAL penalty at ~10-minute headway. The approximation is frequency-independent (PTAL's is not) and should be revisited in v2 with per-link right-of-way data | Assumption, approximates Wu & Hine (2003) |
+| `f_cap` | 12 departures/hour | At a 10-minute headway (~6 departures/hour), passengers switch from random arrival to timetable planning; beyond this point, marginal departures affect mode choice, not service usage | Assumption |
+| `k` | To be calibrated | Set from the observed `A_i` distribution once `core.stop_service_hourly` is populated, targeting the 95th percentile at score ~90 so the full [0,100] range is used | To be calibrated from real data |
 | Window | 07:00–09:00 weekday | Peak commuting service | Assumption |
 | Distance | Straight-line, EPSG:7899 | Fast, testable, no extra data | Known limitation |
 | Grid | ~250 m hexagons | Readable at city scale; ~0.05 km² per cell | Assumption |
@@ -268,7 +268,7 @@ The table shows the intended behaviour: frequency is worth something, distance e
 
 | Metric | Meaning |
 | --- | --- |
-| `mean_score` | Population-weighted mean of cell scores in the area |
+| `score` | Score at the SA1 representative point |
 | `pct_within_400m` | Share of residents within 400 m of any stop |
 | `pct_within_800m` | Share of residents within 800 m of any stop |
 | `pct_frequent` | Share within a catchment of a service with ≥ 4 departures/hour |
@@ -305,13 +305,14 @@ The map exposes the same result twice: as a coloured hex layer for reading the c
 - **Compare within a model run, not across model versions.** A parameter change bumps the model version; scores from different versions are not directly comparable.
 - **The score is supply, not demand.** It does not account for crowding, reliability, fares, or where the services go.
 - **A high mean can hide a low tail.** Read `p10_score` and the catchment shares alongside the mean.
+- **Catchment shares measure proximity, not service quality.** `pct_within_400m` and `pct_within_800m` report what fraction of residents live within walking distance of any stop, but do not account for frequency or reliability. See §1.2: frequency and distance interact; proximity alone is insufficient for accessibility.
 
 ### 4.10 Validation
 
 - Hand-computed fixtures: one stop and three origins with known results (the table above).
 - Property tests: scores stay in `[0, 100]`; adding a stop or a departure never lowers a score; moving an origin further away never raises it; no stops gives 0; row order does not matter.
 - Golden-file test: a small synthetic city produces exactly the stored expected scores.
-- Real-data sanity checks: the CBD should score near the top and the outer fringe near zero; the rank correlation with a plain stop count is reported, because a correlation near 1 would mean the frequency term adds nothing.
+- Real-data sanity checks: the CBD should score near the top and the outer fringe near zero. As a diagnostic: compute rank correlation with a plain stop count (stop-count and frequency are collinear, so high correlation is expected even when frequency matters), and compare rankings under observed frequency vs. uniform frequency to isolate the frequency term's effect.
 - Sensitivity run: vary radii by ±25%, the decay rate and the cap, and report how stable the SA2 ranking remains.
 
 ### 4.11 Known limits
@@ -464,12 +465,12 @@ See `backend/scripts/data_viz.py` to generate this visualization from loaded dat
 
 ### 5.4 Data quality issues to resolve
 
-1. **Boundary vintage mismatch.** The repository has **2026 SA1 boundaries** (ASGS Edition 4) but **2021 Census** counts (Edition 3). Joining by code matches only 12,365 of 15,482 census SA1s (79.9%), covering 5,110,390 of 6,503,324 people (78.6%). The remaining 3,117 SA1s and 1.39 million people would be silently dropped. Two valid fixes:
+1. **Boundary vintage mismatch.** The repository uses **ASGS Edition 3** (2021 Census matched) with 15,478 SA1s. The Census G01 file contains 15,482 rows, of which 4 are ABS pseudo-SA1s (Migratory–Offshore–Shipping, No Usual Address) with 9,124 residents but no polygon boundary. The attainable match rate is 15,478 / (15,482 - 4) = 99.97%; the correct population denominator is **6,494,200** (not 6,503,324). When population-weighting any geography, exclude the 9,124 unassignable persons. This prevents silent data loss and accurate calibration of population denominators.
    - use **ASGS Edition 3** SA1 boundaries to match the 2021 Census exactly (recommended for version 1), or
    - apply the ABS 2021→2026 SA1 correspondence to apportion population onto the 2026 boundaries.
    The pipeline must fail validation if the match rate falls below a configured threshold.
 2. **GTFS expires silently.** The feed covers a rolling window. The current metro calendar runs to 31 December 2026, but a stale download can produce zero service. Validation must require at least 14 future days of service.
-3. **`stop_id` is not unique across folders.** Because each operational branch is published as its own feed, a stop served by two branches appears once per branch. The snapshot has 32,063 stop records but only 31,080 distinct `stop_id` values — 983 duplicates, 90 of them inside the Melbourne CBD study area. Loading them under a `(feed_version_id, stop_id)` primary key fails outright, since PostgreSQL rejects an `ON CONFLICT DO UPDATE` whose statement proposes the same key twice. Measurement settles the fix: all 893 colliding identifiers are **0 m apart** with matching names (Flinders Street `11212` is at the same coordinates in both the Regional Train and Metropolitan Train feeds), so they are one physical stop published several times, not an identifier reused for different places. The loader therefore deduplicates on `(stop_id, mode)`, yielding 31,140 rows. Deduplicating on `stop_id` alone would be wrong: 358 stops are genuinely served by two modes (coach and bus, or tram and bus) and must survive as separate stop–mode pairs, which is the unit 4.2 sums over. Service frequency summed across branches belongs in `core.stop_service_hourly`, not in duplicated stop rows. Name collisions need no tiebreak: 45 identifiers carry different names across feeds, but all 45 differ only *between* modes (`12172` is "Pakenham Station" in the rail feeds and "Pakenham Railway Station" in the coach feed), and those rows are kept separately. Within a `(stop_id, mode)` group, names always agree.
+3. **`stop_id` is not unique across folders.** Because each operational branch is published as its own feed, a stop served by two branches appears once per branch. The snapshot has 32,063 stop records but only 31,080 distinct `stop_id` values — 983 duplicates, 90 of them inside the Melbourne CBD study area. Loading them under a `(feed_version_id, stop_id)` primary key fails outright, since PostgreSQL rejects an `ON CONFLICT DO UPDATE` whose statement proposes the same key twice. Measurement settles the fix: all 893 colliding identifiers are **0 m apart** with matching names (Flinders Street `11212` is at the same coordinates in both the Regional Train and Metropolitan Train feeds), so they are one physical stop published several times, not an identifier reused for different places. The loader therefore deduplicates on `(stop_id, mode)`: starting from 32,063 raw records, same-mode stops appearing in multiple zones are consolidated (removing 625 duplicates), leaving **31,438 unique stop–mode pairs**. Deduplicating on `stop_id` alone would be wrong: 358 stops are genuinely served by two modes (coach and bus, or tram and bus) and must survive as separate stop–mode pairs, which is the unit 4.2 sums over. Service frequency summed across branches belongs in `core.stop_service_hourly`, not in duplicated stop rows. Name collisions need no tiebreak: 45 identifiers carry different names across feeds, but all 45 differ only *between* modes (`12172` is "Pakenham Station" in the rail feeds and "Pakenham Railway Station" in the coach feed), and those rows are kept separately. Within a `(stop_id, mode)` group, names always agree.
 4. **Stop records are not all stops.** `location_type` includes stations (1), entrances (2) and generic nodes (3). Only platforms and stations should contribute; platforms must be merged to their parent station to avoid multiplying service.
 5. **Replacement buses.** Metro feeds include `R-Bus` platform codes for disruptions. They must be excluded from normal service counts.
 6. **Times after midnight.** `departure_time` can exceed `24:00:00`; parsing as a clock time silently breaks the window.
@@ -479,7 +480,7 @@ See `backend/scripts/data_viz.py` to generate this visualization from loaded dat
 ### 5.5 Still required before a full run
 
 - ASGS **Edition 3** SA2 boundaries for the roll-up. Edition 3 specifically: Edition 4 would reintroduce the vintage mismatch that 5.4 item 1 resolves.
-- A Greater Melbourne study-area definition (GCCSA code `2GMEL`; confirm in the boundary file). The loaders presently filter GTFS stops to eleven named CBD SA2s while loading all of Victoria's SA1s and Census rows, which is asymmetric — one definition should serve every loader (ISSUES.md I-10).
+- A Greater Melbourne study-area definition (GCCSA code `2GMEL`; confirm in the boundary file). This is applied at the scoring layer, not at load time — all of Victoria's GTFS, SA1s and Census rows are loaded, then filtered to Greater Melbourne at compute (see ISSUES.md I-10 on scope consistency).
 - The OSM Victoria extract, only for version 2 network distance.
 - *No longer required:* the ABS 2021→2026 correspondence file. Moving to Edition 3 boundaries made it unnecessary, and `core.sa1_correspondence` has been dropped.
 
@@ -637,7 +638,7 @@ flowchart TB
 3. **Validate.** Required files and columns, types, unique keys, coordinates inside Victoria, CRS, calendar coverage and row-count drift. A failure quarantines the file and alerts.
 4. **Load staging.** Typed copies, geometry built in EPSG:7899, platforms merged into parent stations, replacement stops dropped.
 5. **Aggregate service.** `stop_times` is streamed in chunks; only departures per stop, hour and day type are stored.
-6. **Quality gates.** SQL assertions: every stop has service, counts are within tolerance, no orphan references. Results go to `ops.dq_result`.
+6. **Quality gates.** SQL assertions: service-carrying stops > 95% of the prior run (±2% tolerance), counts within tolerance, no orphan references. Results go to `ops.dq_result`.
 7. **Promote.** In one transaction, staging is copied into `core` under a new `feed_version_id`, and `ops.active_version` is updated.
 8. **Score.** `scores_recompute` loads origins, stops and population, calls `transitcov`, checks the results and publishes a new `model_run_id`.
 9. **Serve.** The API reads `api` views filtered by the active feed and model run; the web app reads the API through Nginx.
@@ -687,11 +688,11 @@ Only Nginx is exposed publicly. The database and Airflow stay on the internal ne
 
 | Part | State |
 | --- | --- |
-| Data acquisition and profiling | Done for the 23 Oct 2026 snapshot (`backend/src/main.py`) |
-| Docker Compose scaffold | Present; it still references `infra/init.sql`, `pipeline/dags` and `src/transitcov`, which must be aligned with the backend layout before the stack runs end to end |
-| PostGIS schema and migrations | Planned |
-| `transitcov` library | Planned |
-| Airflow DAGs | Planned |
+| Data acquisition and profiling | Done for the 23 Oct 2026 snapshot (`backend/src/main.py`; reference geography and population loaded) |
+| PostGIS schema and migrations | Done: 9 Alembic revisions applied; reference geography, population, GTFS stops loaded; `stop_service_hourly` table exists but unpopulated |
+| Docker Compose scaffold | Present; references outdated paths; infrastructure needs alignment with backend layout |
+| `transitcov` library (scoring functions) | Planned |
+| Airflow DAGs (frequency aggregation, scoring, promotion) | Planned |
 | FastAPI service | Planned |
 | React map | Planned |
 | CI/CD | Planned |
@@ -707,7 +708,7 @@ transit-coverage-platform/
 ├── data/                       # downloaded open data (gitignored)
 │   ├── _published_public_transport_gtfs_schedule_gtfs/
 │   ├── 2021_GCP_all_for_VIC_short-header/
-│   └── SA1_2026_AUST_SHP_GDA2020/
+│   └── SA1_2021_AUST_SHP_GDA2020/
 ├── drafts/                     # design notes and the Mermaid source (gitignored)
 │   ├── draft-01.md
 │   ├── draft-02.md
