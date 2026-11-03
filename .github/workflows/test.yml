@@ -36,13 +36,15 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Install backend dependencies
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv sync
-          $HOME/.cargo/bin/uv pip install -e src/transitcov
+          uv sync
+          uv pip install -e src/transitcov
 
       - name: Run Alembic migrations
         working-directory: backend
@@ -53,7 +55,7 @@ jobs:
           TRANSIT_DB_PASSWORD: postgres
           TRANSIT_DB_NAME: transit
         run: |
-          $HOME/.cargo/bin/uv run alembic upgrade head
+          uv run alembic upgrade head
 
       - name: Run backend loader tests
         working-directory: backend
@@ -64,12 +66,12 @@ jobs:
           TRANSIT_DB_PASSWORD: postgres
           TRANSIT_DB_NAME: transit
         run: |
-          $HOME/.cargo/bin/uv run pytest tests/test_loader_*.py -v --tb=short
+          uv run pytest tests/test_loader_*.py -v --tb=short
 
       - name: Run transitcov library tests (pure functions, no DB)
         working-directory: backend/src/transitcov
         run: |
-          $HOME/.cargo/bin/uv run pytest tests/ -v --tb=short
+          uv run pytest tests/ -v --tb=short
 
       - name: Test import boundaries
         working-directory: backend
@@ -81,7 +83,7 @@ jobs:
           TRANSIT_DB_NAME: transit
         run: |
           # Verify transitcov has no imports from app/models/loaders/queries
-          $HOME/.cargo/bin/uv run python -c "
+          uv run python -c "
           import ast
           import sys
           from pathlib import Path
@@ -107,8 +109,8 @@ jobs:
       - name: Generate coverage report
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv run pytest tests/test_loader_*.py --cov=src/app --cov-report=term-missing --cov-report=html
-          $HOME/.cargo/bin/uv run pytest src/transitcov/tests/ --cov=src/transitcov --cov-report=term-missing
+          uv run pytest tests/test_loader_*.py --cov=src/app --cov-report=term-missing --cov-report=html
+          uv run pytest src/transitcov/tests/ --cov=src/transitcov --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
@@ -130,23 +132,25 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Install dependencies
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv sync
-          $HOME/.cargo/bin/uv pip install -e src/transitcov
+          uv sync
+          uv pip install -e src/transitcov
 
       - name: Check imports with isort
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv run isort --check-only src/ || true
+          uv run isort --check-only src/ || true
 
       - name: Lint with flake8
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv run flake8 src/ --max-line-length=100 --count --statistics || true
+          uv run flake8 src/ --max-line-length=100 --count --statistics || true
 
   type-check:
     runs-on: ubuntu-latest
@@ -160,15 +164,17 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Install dependencies
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv sync
-          $HOME/.cargo/bin/uv pip install -e src/transitcov
+          uv sync
+          uv pip install -e src/transitcov
 
       - name: Type check with mypy
         working-directory: backend
         run: |
-          $HOME/.cargo/bin/uv run mypy src/app/loaders/feed_version.py src/transitcov/src/transitcov/ --ignore-missing-imports || true
+          uv run mypy src/app/loaders/feed_version.py src/transitcov/src/transitcov/ --ignore-missing-imports || true
